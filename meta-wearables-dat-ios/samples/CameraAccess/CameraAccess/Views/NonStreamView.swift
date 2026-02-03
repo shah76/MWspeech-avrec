@@ -22,6 +22,9 @@ struct NonStreamView: View {
   @ObservedObject var viewModel: StreamSessionViewModel
   @ObservedObject var wearablesVM: WearablesViewModel
   @State private var sheetHeight: CGFloat = 300
+    
+    // MARK: - Recorder
+    @State private var recordVideo = false
 
     let synthesizer = AVSpeechSynthesizer()
     func speakText(_ text: String, languageCode: String) {
@@ -98,13 +101,15 @@ struct NonStreamView: View {
         .padding(.bottom, 12)
         .opacity(viewModel.hasActiveDevice ? 0 : 1)
 
+          Toggle("Record Video", isOn: $recordVideo)
+                          .padding() // Add padding for better spacing
         CustomButton(
           title: "Start streaming",
           style: .primary,
           isDisabled: !viewModel.hasActiveDevice
         ) {
           Task {
-            await viewModel.handleStartStreaming()
+              await viewModel.handleStartStreaming(recordVideo: recordVideo)
           }
         }
       }

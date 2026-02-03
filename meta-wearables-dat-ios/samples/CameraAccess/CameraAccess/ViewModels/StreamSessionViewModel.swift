@@ -25,7 +25,7 @@ enum StreamingStatus {
 }
 
 import OSLog
-private let logger = Logger(subsystem: "com.yourcompany.yourapp", category: "ContentView")
+private let logger = Logger(subsystem: "com.yourcompany.yourapp", category: "StreamSessionViewModel")
 
 @MainActor
 class StreamSessionViewModel: ObservableObject {
@@ -62,6 +62,11 @@ class StreamSessionViewModel: ObservableObject {
     private let deviceSelector: AutoDeviceSelector
     private var deviceMonitorTask: Task<Void, Never>?
     
+    private var CalcImageWidthHeight: Bool = true
+    private var recorder: VideoAudioRecorder?
+    private var displayLink: CADisplayLink?
+    private var isRecording: Bool = false
+    
     init(wearables: WearablesInterface) {
         self.wearables = wearables
         // Let the SDK auto-select from available devices
@@ -95,8 +100,15 @@ class StreamSessionViewModel: ObservableObject {
                 
                 if let image = videoFrame.makeUIImage() {
                     self.currentVideoFrame = image
+                    if (CalcImageWidthHeight) {
+                        logger.notice("Image width:\(self.currentVideoFrame?.size.width ?? 0.0), height:\(self.currentVideoFrame?.size.height ?? 0.0)")
+                        CalcImageWidthHeight = false
+                    }
                     if !self.hasReceivedFirstFrame {
                         self.hasReceivedFirstFrame = true
+                    }
+                    if isRecording {
+                        recorder?.appendVideoFrame(self.currentVideoFrame!)
                     }
                 }
             }
@@ -135,7 +147,12 @@ class StreamSessionViewModel: ObservableObject {
     }
     
     
-    func handleStartStreaming() async {
+    func handleStartStreaming(recordVideo: Bool) async {
+        isRecording = recordVideo
+        if isRecording {
+            recorder = VideoAudioRecorder(width: 360, height: 640, fps: 24)
+            startRecording()
+        }
         let permission = Permission.camera
         do {
             let status = try await wearables.checkPermissionStatus(permission)
@@ -170,6 +187,9 @@ class StreamSessionViewModel: ObservableObject {
     
     func stopSession() async {
         stopTimer()
+        if isRecording {
+            stopRecording()
+        }
         await streamSession.stop()
     }
     
@@ -196,6 +216,58 @@ class StreamSessionViewModel: ObservableObject {
     func dismissPhotoPreview() {
         showPhotoPreview = false
         capturedPhoto = nil
+    }
+    
+    
+    // MARK: - VideoAudioRecorder related functions
+    private func startFrameCapture() {
+        displayLink = CADisplayLink(target: self, selector: #selector(captureFrame))
+        displayLink?.preferredFramesPerSecond = 30
+        displayLink?.add(to: .main, forMode: .common)
+    }
+    @objc private func captureFrame() {
+        guard isRecording else { return }
+        
+        //if let image = imageSource?.getCurrentFrame() {
+        //    recorder?.appendVideoFrame(image)
+        //}
+    }
+    
+    private func stopFrameCapture() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+    
+    func startRecording() {
+        do {
+            try recorder?.startRecording()
+            isRecording = true
+            logger.notice("Recording...")
+            //startFrameCapture()
+            
+        } catch {
+            logger.notice("Failed to start recording: \(error.localizedDescription)")
+        }
+    }
+    func stopRecording() {
+        isRecording = false
+        //stopFrameCapture()
+        logger.notice("Saving video...")
+
+        recorder?.stopRecording { [weak self] result in
+            Task { @MainActor in
+                guard let self = self else { return }
+                
+                switch result {
+                case .success(let url):
+                    logger.notice("Video saved successfully!")
+                    logger.notice("Video saved to: \(url.path)")
+                    
+                case .failure(let error):
+                    logger.notice("Failed to save video: \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     private func startTimer() {
