@@ -65,7 +65,9 @@ class StreamSessionViewModel: ObservableObject {
     private var CalcImageWidthHeight: Bool = true
     private var recorder: VideoAudioRecorder?
     private var displayLink: CADisplayLink?
-    private var isRecording: Bool = false
+    private var recordVideo = false
+    
+    var recognizeSpeech = false
     
     init(wearables: WearablesInterface) {
         self.wearables = wearables
@@ -107,9 +109,6 @@ class StreamSessionViewModel: ObservableObject {
                     if !self.hasReceivedFirstFrame {
                         self.hasReceivedFirstFrame = true
                     }
-                    if isRecording {
-                        recorder?.appendVideoFrame(self.currentVideoFrame!)
-                    }
                 }
             }
         }
@@ -147,9 +146,10 @@ class StreamSessionViewModel: ObservableObject {
     }
     
     
-    func handleStartStreaming(recordVideo: Bool) async {
-        isRecording = recordVideo
-        if isRecording {
+    func handleStartStreaming(recordVideo: Bool, recognizeSpeech: Bool) async {
+        self.recordVideo = recordVideo
+        self.recognizeSpeech = recognizeSpeech
+        if recordVideo {
             recorder = VideoAudioRecorder(width: 360, height: 640, fps: 24)
             startRecording()
         }
@@ -187,7 +187,7 @@ class StreamSessionViewModel: ObservableObject {
     
     func stopSession() async {
         stopTimer()
-        if isRecording {
+        if recordVideo {
             stopRecording()
         }
         await streamSession.stop()
@@ -222,15 +222,15 @@ class StreamSessionViewModel: ObservableObject {
     // MARK: - VideoAudioRecorder related functions
     private func startFrameCapture() {
         displayLink = CADisplayLink(target: self, selector: #selector(captureFrame))
-        displayLink?.preferredFramesPerSecond = 30
+        displayLink?.preferredFramesPerSecond = 24
         displayLink?.add(to: .main, forMode: .common)
     }
     @objc private func captureFrame() {
-        guard isRecording else { return }
+        guard recordVideo else { return }
         
-        //if let image = imageSource?.getCurrentFrame() {
-        //    recorder?.appendVideoFrame(image)
-        //}
+        if let image = self.currentVideoFrame {
+            recorder?.appendVideoFrame(image)
+        }
     }
     
     private func stopFrameCapture() {
@@ -241,17 +241,17 @@ class StreamSessionViewModel: ObservableObject {
     func startRecording() {
         do {
             try recorder?.startRecording()
-            isRecording = true
+            recordVideo = true
             logger.notice("Recording...")
-            //startFrameCapture()
+            startFrameCapture()
             
         } catch {
             logger.notice("Failed to start recording: \(error.localizedDescription)")
         }
     }
     func stopRecording() {
-        isRecording = false
-        //stopFrameCapture()
+        recordVideo = false
+        stopFrameCapture()
         logger.notice("Saving video...")
 
         recorder?.stopRecording { [weak self] result in

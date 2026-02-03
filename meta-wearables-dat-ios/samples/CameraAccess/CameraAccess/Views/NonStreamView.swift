@@ -25,6 +25,8 @@ struct NonStreamView: View {
     
     // MARK: - Recorder
     @State private var recordVideo = false
+    // MARK: - SpeechRecognizer
+    @State private var recognizeSpeech = false
 
     let synthesizer = AVSpeechSynthesizer()
     func speakText(_ text: String, languageCode: String) {
@@ -102,14 +104,16 @@ struct NonStreamView: View {
         .opacity(viewModel.hasActiveDevice ? 0 : 1)
 
           Toggle("Record Video", isOn: $recordVideo)
-                          .padding() // Add padding for better spacing
+                          .padding()
+          Toggle("Recognize Speech", isOn: $recognizeSpeech)
+                          .padding()
         CustomButton(
           title: "Start streaming",
           style: .primary,
           isDisabled: !viewModel.hasActiveDevice
         ) {
           Task {
-              await viewModel.handleStartStreaming(recordVideo: recordVideo)
+              await viewModel.handleStartStreaming(recordVideo: recordVideo, recognizeSpeech: recognizeSpeech)
           }
         }
       }

@@ -63,11 +63,12 @@ struct StreamView: View {
             }
         }
         .onAppear {
-            if speechRecognizer == nil {
-                speechRecognizer = SpeechRecognizer(viewModel: viewModel)
+            if (viewModel.recognizeSpeech) {
+                if speechRecognizer == nil {
+                    speechRecognizer = SpeechRecognizer(viewModel: viewModel)
+                }
+                speechRecognizer?.startTranscribing()
             }
-            speechRecognizer?.startTranscribing()
-            
         }
         .onDisappear {
             Task {
@@ -75,7 +76,9 @@ struct StreamView: View {
                     await viewModel.stopSession()
                 }
             }
-            speechRecognizer?.stopTranscribing()
+            if (viewModel.recognizeSpeech) {
+                speechRecognizer?.stopTranscribing()
+            }
         }
         // Show captured photos from DAT SDK in a preview sheet
         .sheet(isPresented: $viewModel.showPhotoPreview) {
