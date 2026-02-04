@@ -20,9 +20,7 @@ import SwiftUI
 struct StreamView: View {
     @ObservedObject var viewModel: StreamSessionViewModel
     @ObservedObject var wearablesVM: WearablesViewModel
-    
-    //@State var speechRecognizer: SpeechRecognizer?
-    
+        
     var body: some View {
         ZStack {
             // Black background for letterboxing/pillarboxing
@@ -63,14 +61,7 @@ struct StreamView: View {
             }
         }
         .onAppear {
-            /*
-            if (viewModel.recognizeSpeech) {
-                if speechRecognizer == nil {
-                    speechRecognizer = SpeechRecognizer(viewModel: viewModel)
-                }
-                speechRecognizer?.startTranscribing()
-            }
-             */
+            
         }
         .onDisappear {
             Task {

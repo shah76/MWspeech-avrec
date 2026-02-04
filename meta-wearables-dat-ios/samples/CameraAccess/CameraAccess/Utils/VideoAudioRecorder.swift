@@ -561,23 +561,24 @@ class VideoAudioRecorder{
         }
     }
 }
-/*
- // Alternative: Single tap, dual purpose
- inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, time in
-     // Feed to speech recognition
-     self?.recognitionRequest?.append(buffer)
-     
-     // Feed to video file
-     guard let self = self,
-           self.isRecording,
-           let audioInput = self.audioWriterInput,
-           audioInput.isReadyForMoreMediaData else {
-         return
-     }
-     
-     let presentationTime = self.convertAudioTime(time)
-     if let sampleBuffer = self.createSampleBuffer(from: buffer, presentationTime: presentationTime) {
-         audioInput.append(sampleBuffer)
-     }
- }
- */
+
+extension SFSpeechRecognizer {
+    static func hasAuthorizationToRecognize() async -> Bool {
+        await withCheckedContinuation { continuation in
+            requestAuthorization { status in
+                continuation.resume(returning: status == .authorized)
+            }
+        }
+    }
+}
+
+extension AVAudioSession {
+    func hasPermissionToRecord() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVAudioApplication.requestRecordPermission { authorized in
+                continuation.resume(returning: authorized)
+            }
+        }
+    }
+}
+

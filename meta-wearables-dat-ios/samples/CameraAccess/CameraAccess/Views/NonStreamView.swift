@@ -107,6 +107,7 @@ struct NonStreamView: View {
                           .padding()
           Toggle("Recognize Speech", isOn: $recognizeSpeech)
                           .padding()
+                          .opacity(recordVideo ? 1 : 0)
         CustomButton(
           title: "Start streaming",
           style: .primary,
