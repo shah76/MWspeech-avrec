@@ -1,10 +1,12 @@
 import AVFoundation
 import UIKit
 import Photos
+import OSLog
+import Speech
+import Observation
 
-class VideoAudioRecorder {
-    
-    // MARK: - Properties
+class VideoAudioRecorder{
+    private let logger = Logger(subsystem: "com.yourcompany.yourapp", category: "VideoAudioRecorder")
     
     private var assetWriter: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -24,10 +26,34 @@ class VideoAudioRecorder {
     private var audioFormat: AVAudioFormat?
     private var audioStartTime: CMTime?
     
+    // MARK: - speech reconition
+    weak var viewModel: StreamSessionViewModel?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var recognizer: SFSpeechRecognizer?
+    private var recognizeSpeech = false
+    public enum RecognizerError: Error {
+        case nilRecognizer
+        case notAuthorizedToRecognize
+        case notPermittedToRecord
+        case recognizerIsUnavailable
+        
+        public var message: String {
+            switch self {
+            case .nilRecognizer: return "Can't initialize speech recognizer"
+            case .notAuthorizedToRecognize: return "Not authorized to recognize speech"
+            case .notPermittedToRecord: return "Not permitted to record audio"
+            case .recognizerIsUnavailable: return "Recognizer is unavailable"
+            }
+        }
+    }
+    
     // MARK: - Initialization
     
-    init(width: Int, height: Int, fps: Int32 = 24) {
-        // Video settings
+    init(width: Int, height: Int, fps: Int32 = 24,
+         recognizeSpeech: Bool) {
+        
+        self.recognizeSpeech = recognizeSpeech
         videoSettings = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width,
@@ -61,7 +87,7 @@ class VideoAudioRecorder {
         
         // Request microphone permission
         let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetooth])
+        try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try audioSession.setActive(true)
         
         // Remove existing file if present
@@ -121,85 +147,6 @@ class VideoAudioRecorder {
         print("Recording started: \(outputURL.path)")
     }
     
-    func stopRecording(completion: @escaping (Result<URL, Error>) -> Void) {
-        guard isRecording else {
-            completion(.failure(RecorderError.notRecording))
-            return
-        }
-        
-        isRecording = false
-        
-        // Stop audio capture
-        stopAudioCapture()
-        
-        // Mark inputs as finished
-        videoInput?.markAsFinished()
-        audioInput?.markAsFinished()
-        
-        // Capture values we need before entering the closure
-        guard let assetWriter = self.assetWriter else {
-            completion(.failure(RecorderError.failedToCreateWriter))
-            return
-        }
-        let outputURL = self.outputURL
-        
-        // Finish writing
-        assetWriter.finishWriting { [weak self] in
-            guard let self = self else { return }
-            
-            if let error = assetWriter.error {
-                completion(.failure(error))
-                return
-            }
-            
-            // Save to Photos library
-            Task { @MainActor in
-                self.saveToPhotosLibrary(url: outputURL, completion: completion)
-            }
-        }
-    }
-    
-    // MARK: - Frame Processing
-    
-    func appendVideoFrame(_ image: UIImage, presentationTime: CMTime? = nil) {
-        guard isRecording,
-              let videoInput = videoInput,
-              let pixelBufferAdaptor = pixelBufferAdaptor,
-              videoInput.isReadyForMoreMediaData else {
-            return
-        }
-        
-        // Calculate presentation time
-        let timestamp: CMTime
-        if let presentationTime = presentationTime {
-            timestamp = presentationTime
-        } else {
-            // Use frame count to calculate time (assuming 24 fps)
-            //let fps: Int64 = 24
-            let fps: Int32 = 24
-            timestamp = CMTimeMake(value: frameCount, timescale: fps)
-        }
-        
-        // Set start time on first frame
-        if startTime == nil {
-            startTime = timestamp
-        }
-        
-        // Create pixel buffer from UIImage
-        guard let pixelBuffer = createPixelBuffer(from: image) else {
-            print("Failed to create pixel buffer from image")
-            return
-        }
-        
-        // Append pixel buffer
-        let success = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: timestamp)
-        if success {
-            frameCount += 1
-        } else {
-            print("Failed to append pixel buffer at time: \(timestamp.seconds)")
-        }
-    }
-    
     // MARK: - Audio Capture
     
     private func setupAudioCapture() throws {
@@ -212,19 +159,87 @@ class VideoAudioRecorder {
         let inputFormat = inputNode.outputFormat(forBus: 0)
         audioFormat = inputFormat
         
+        if (recognizeSpeech) {
+            Task {
+                do {
+                    guard await SFSpeechRecognizer.hasAuthorizationToRecognize() else {
+                        throw RecognizerError.notAuthorizedToRecognize
+                    }
+                    guard await AVAudioSession.sharedInstance().hasPermissionToRecord() else {
+                        throw RecognizerError.notPermittedToRecord
+                    }
+                } catch {
+                    transcribe(error)
+                }
+            }
+            
+            recognizer = SFSpeechRecognizer()
+            request = SFSpeechAudioBufferRecognitionRequest()
+            request?.shouldReportPartialResults = true
+            
+            guard let recognizer, let request else {
+                throw RecorderError.failedToCreateAudioEngine
+            }
+            self.task = recognizer.recognitionTask(with: request, resultHandler: { [weak self] result, error in
+                self?.recognitionHandler(audioEngine: audioEngine, result: result, error: error)
+            })
+        }
+        
         // Install tap to capture audio
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] (buffer, time) in
-            self?.appendAudioBuffer(buffer, time: time)
+            
+            guard let self = self else {
+                return
+            }
+            self.appendAudioBuffer(buffer, time: time)
+            
+            if (self.recognizeSpeech) {
+                self.request?.append(buffer)
+            }
         }
         
         // Start audio engine
         try audioEngine.start()
     }
+    private func recognitionHandler(audioEngine: AVAudioEngine, result: SFSpeechRecognitionResult?, error: Error?) {
+        let receivedFinalResult = result?.isFinal ?? false
+        let receivedError = error != nil
+        
+        if receivedFinalResult || receivedError {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
+        
+        if let result {
+            let x = result.bestTranscription.formattedString
+            logger.notice("In rec:\(x)")
+            transcribe(result.bestTranscription.formattedString)
+        }
+    }
+    
+    // MARK: - Gynmastics to call StreamSessionView
+    private func transcribe(_ message: String) {
+        Task { @MainActor in
+            await self.viewModel?.updateTranscript(message)
+        }
+    }
+    private func transcribe(_ error: Error) {
+        var errorMessage = ""
+        if let error = error as? RecognizerError {
+            errorMessage += error.message
+        } else {
+            errorMessage += error.localizedDescription
+        }
+        logger.notice("<< \(errorMessage) >>")
+    }
     
     private func stopAudioCapture() {
+        task?.cancel()
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
+        request = nil
+        task = nil
     }
     
     private func appendAudioBuffer(_ buffer: AVAudioPCMBuffer, time: AVAudioTime) {
@@ -353,6 +368,43 @@ class VideoAudioRecorder {
         return status == noErr ? description : nil
     }
     
+    func stopRecording(completion: @escaping (Result<URL, Error>) -> Void) {
+        guard isRecording else {
+            completion(.failure(RecorderError.notRecording))
+            return
+        }
+        
+        isRecording = false
+        
+        // Stop audio capture
+        stopAudioCapture()
+        
+        // Mark inputs as finished
+        videoInput?.markAsFinished()
+        audioInput?.markAsFinished()
+        
+        // Capture values we need before entering the closure
+        guard let assetWriter = self.assetWriter else {
+            completion(.failure(RecorderError.failedToCreateWriter))
+            return
+        }
+        let outputURL = self.outputURL
+        
+        // Finish writing
+        assetWriter.finishWriting { [weak self] in
+            guard let self = self else { return }
+            
+            if let error = assetWriter.error {
+                completion(.failure(error))
+                return
+            }
+            
+            // Save to Photos library
+            Task { @MainActor in
+                self.saveToPhotosLibrary(url: outputURL, completion: completion)
+            }
+        }
+    }
     // MARK: - Pixel Buffer Creation
     
     private func createPixelBuffer(from image: UIImage) -> CVPixelBuffer? {
@@ -431,6 +483,47 @@ class VideoAudioRecorder {
         }
     }
     
+    // MARK: - Frame Processing
+    
+    func appendVideoFrame(_ image: UIImage, presentationTime: CMTime? = nil) {
+        guard isRecording,
+              let videoInput = videoInput,
+              let pixelBufferAdaptor = pixelBufferAdaptor,
+              videoInput.isReadyForMoreMediaData else {
+            return
+        }
+        
+        // Calculate presentation time
+        let timestamp: CMTime
+        if let presentationTime = presentationTime {
+            timestamp = presentationTime
+        } else {
+            // Use frame count to calculate time (assuming 24 fps)
+            //let fps: Int64 = 24
+            let fps: Int32 = 24
+            timestamp = CMTimeMake(value: frameCount, timescale: fps)
+        }
+        
+        // Set start time on first frame
+        if startTime == nil {
+            startTime = timestamp
+        }
+        
+        // Create pixel buffer from UIImage
+        guard let pixelBuffer = createPixelBuffer(from: image) else {
+            print("Failed to create pixel buffer from image")
+            return
+        }
+        
+        // Append pixel buffer
+        let success = pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: timestamp)
+        if success {
+            frameCount += 1
+        } else {
+            print("Failed to append pixel buffer at time: \(timestamp.seconds)")
+        }
+    }
+    
     // MARK: - Error Types
     
     enum RecorderError: LocalizedError {
@@ -468,3 +561,23 @@ class VideoAudioRecorder {
         }
     }
 }
+/*
+ // Alternative: Single tap, dual purpose
+ inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, time in
+     // Feed to speech recognition
+     self?.recognitionRequest?.append(buffer)
+     
+     // Feed to video file
+     guard let self = self,
+           self.isRecording,
+           let audioInput = self.audioWriterInput,
+           audioInput.isReadyForMoreMediaData else {
+         return
+     }
+     
+     let presentationTime = self.convertAudioTime(time)
+     if let sampleBuffer = self.createSampleBuffer(from: buffer, presentationTime: presentationTime) {
+         audioInput.append(sampleBuffer)
+     }
+ }
+ */

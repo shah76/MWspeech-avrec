@@ -150,7 +150,10 @@ class StreamSessionViewModel: ObservableObject {
         self.recordVideo = recordVideo
         self.recognizeSpeech = recognizeSpeech
         if recordVideo {
-            recorder = VideoAudioRecorder(width: 360, height: 640, fps: 24)
+            recorder = VideoAudioRecorder(width: 360, height: 640, fps: 24,
+                                          recognizeSpeech: recognizeSpeech)
+            
+            self.recorder?.viewModel = self
             startRecording()
         }
         let permission = Permission.camera

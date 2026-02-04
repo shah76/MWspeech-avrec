@@ -21,7 +21,7 @@ struct StreamView: View {
     @ObservedObject var viewModel: StreamSessionViewModel
     @ObservedObject var wearablesVM: WearablesViewModel
     
-    @State var speechRecognizer: SpeechRecognizer?
+    //@State var speechRecognizer: SpeechRecognizer?
     
     var body: some View {
         ZStack {
@@ -63,12 +63,14 @@ struct StreamView: View {
             }
         }
         .onAppear {
+            /*
             if (viewModel.recognizeSpeech) {
                 if speechRecognizer == nil {
                     speechRecognizer = SpeechRecognizer(viewModel: viewModel)
                 }
                 speechRecognizer?.startTranscribing()
             }
+             */
         }
         .onDisappear {
             Task {
@@ -76,9 +78,11 @@ struct StreamView: View {
                     await viewModel.stopSession()
                 }
             }
+            /*
             if (viewModel.recognizeSpeech) {
                 speechRecognizer?.stopTranscribing()
             }
+             */
         }
         // Show captured photos from DAT SDK in a preview sheet
         .sheet(isPresented: $viewModel.showPhotoPreview) {
