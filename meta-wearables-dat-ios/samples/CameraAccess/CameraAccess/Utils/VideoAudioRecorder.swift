@@ -26,7 +26,7 @@ class VideoAudioRecorder {
     
     // MARK: - Initialization
     
-    init(width: Int, height: Int, fps: Int32 = 30) {
+    init(width: Int, height: Int, fps: Int32 = 24) {
         // Video settings
         videoSettings = [
             AVVideoCodecKey: AVVideoCodecType.h264,
@@ -174,9 +174,9 @@ class VideoAudioRecorder {
         if let presentationTime = presentationTime {
             timestamp = presentationTime
         } else {
-            // Use frame count to calculate time (assuming 30 fps)
-            //let fps: Int64 = 30
-            let fps: Int32 = 30
+            // Use frame count to calculate time (assuming 24 fps)
+            //let fps: Int64 = 24
+            let fps: Int32 = 24
             timestamp = CMTimeMake(value: frameCount, timescale: fps)
         }
         
